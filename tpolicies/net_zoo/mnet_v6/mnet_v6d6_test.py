@@ -401,6 +401,8 @@ def mnet_v6d6_run_vtrace_loss_test():
     'gather_batch': True,
     'merge_pi': False,
     'distillation': True,
+    'use_rule_mask': False,
+    'use_rgps_loss': True,
   }
   converter = PB2AllConverter(dict_space=True, zmaker_version='v5',
                               zstat_data_src=FLAGS.zstat_data_src,
@@ -595,8 +597,8 @@ def main(_):
   # mnet_v6d6_test()
   # mnet_v6d6_endpoints_test()
   # mnet_v6d6_run_il_loss_test()
-  mnet_v6d6_run_rl_loss_test()
-  # mnet_v6d6_run_vtrace_loss_test()
+  # mnet_v6d6_run_rl_loss_test()
+  mnet_v6d6_run_vtrace_loss_test()
   # mnet_v6d6_run_ppo2_loss_test()
   # pass
 

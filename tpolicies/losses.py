@@ -116,30 +116,96 @@ def distill_loss_old(student_logits, teacher_logits, masks):
   return head_distill_loss
 
 
-def distill_loss(student_pds, teacher_logits, masks):
+def distill_loss(student_pds, teacher_flatparam, masks=None):
   """ Distillation loss.
     Args:
       student_pds: structured pds compatible with nest.map_structure.
-      teacher_logits:
+      teacher_flatparam: logits for categorical and
+      concat([mean, var]) for DiagGaussian
+
+    Returns:
+      final_distill_loss: total loss.
+      head_distill_loss: per-head loss. The same structure as inputs.
+  """
+  from tpolicies.utils.distributions import CategoricalPd
+  from tpolicies.utils.distributions import DiagGaussianPd
+  class FakeCategoricalPD(object):
+    def __init__(self, logits):
+      self.logits = logits
+  class FakeDiagGaussianPD(object):
+    def __init__(self, mean, logstd):
+      self.mean = mean
+      self.logstd = logstd
+      self.std = tf.exp(logstd)
+  def _make_fake_pd(pd, o_flatparam):
+    if isinstance(pd, CategoricalPd):
+      o = FakeCategoricalPD(o_flatparam)
+    elif isinstance(pd, DiagGaussianPd):
+      o_mean, o_logstd = tf.split(
+        axis=-1, num_or_size_splits=2, value=o_flatparam)
+      o = FakeDiagGaussianPD(o_mean, o_logstd)
+    else:
+      raise NotImplementedError("Unknown PD type {}.".format(pd))
+    return o
+  def _compute_kl_with_mask(pd, o_flatparam, mask):
+    o = _make_fake_pd(pd, o_flatparam)
+    return tf.reduce_mean(pd.kl(o) * mask)
+  def _compute_kl(pd, o_flatparam):
+    o = _make_fake_pd(pd, o_flatparam)
+    return tf.reduce_mean(pd.kl(o))
+
+  if masks is not None:
+    head_distill_loss = nest.map_structure(
+      _compute_kl_with_mask, student_pds, teacher_flatparam, masks)
+  else:
+    head_distill_loss = nest.map_structure(
+      _compute_kl, student_pds, teacher_flatparam)
+  return head_distill_loss
+
+
+def distill_loss_v2(student_pds, teacher_mean, teacher_logstd, masks):
+  """ Distillation loss for continuous case.
+    Args:
+      student_pds: structured pds compatible with nest.map_structure.
+      teacher_mean:
+      teacher_logstd:
 
     Returns:
       final_distill_loss: total loss.
       head_distill_loss: per-head loss. The same structure as inputs.
   """
   class PD(object):
-    def __init__(self, logits):
-      self.logits = logits
-  def _compute_kl(pd, o_logits, mask):
-    o = PD(o_logits)
+    def __init__(self, mean, logstd):
+      self.mean = mean
+      self.logstd = logstd
+      self.std = 2.718281828459045 ** logstd
+  def _compute_kl(pd, o_mean, o_logstd, mask):
+    o = PD(o_mean, o_logstd)
     return tf.reduce_mean(pd.kl(o) * mask)
 
-  head_distill_loss = nest.map_structure(_compute_kl, student_pds, teacher_logits, masks)
+  head_distill_loss = nest.map_structure(
+    _compute_kl, student_pds, teacher_mean, teacher_logstd, masks)
   return head_distill_loss
+
+
+def rgps_loss(student_pd, teacher_logits, mask):
+  a0 = student_pd.logits - tf.reduce_max(student_pd.logits, axis=-1, keep_dims=True)
+  a1 = teacher_logits - tf.reduce_max(teacher_logits, axis=-1, keep_dims=True)
+  ea0 = tf.exp(a0)
+  ea1 = tf.exp(a1)
+  z0 = tf.reduce_sum(ea0, axis=-1, keep_dims=True)
+  z1 = tf.reduce_sum(ea1, axis=-1, keep_dims=True)
+  # p0 = ea0 / z0
+  p1 = ea1 / z1
+  loss = tf.squeeze(tf.cast(mask, dtype=tf.float32)) * \
+         tf.reduce_sum(p1 * (tf.log(z0) - a0), axis=-1)
+  return tf.reduce_mean(loss)
 
 
 def ppo_loss(neglogp, oldneglogp, vpred, R, V, masks=None, reward_weights=None,
              merge_pi=True, adv_normalize=True, clip_range=0.1,
-             sync_statistics=None):
+             clip_range_lower=0.1, sync_statistics=None,
+             batch_sam_weight=None):
   """"PPO loss.
 
   Not recommended, use `ppo2_loss` instead. Use it only for backwards
@@ -191,26 +257,36 @@ def ppo_loss(neglogp, oldneglogp, vpred, R, V, masks=None, reward_weights=None,
     import horovod.tensorflow as hvd
     batch_mean = hvd.allreduce(batch_mean, average=True)
     batch_mean_square = hvd.allreduce(batch_mean_square, average=True)
+  batch_std = tf.sqrt(batch_mean_square - tf.square(batch_mean))
   if adv_normalize:
-    batch_var = batch_mean_square - tf.square(batch_mean)
-    adv = (adv - batch_mean) / tf.sqrt(batch_var + 1e-8)
+    adv = (adv - batch_mean) / (batch_std + 1e-8)
 
   vpredclipped = V + tf.clip_by_value(vpred - V, - clip_range, clip_range)
   vf_losses1 = tf.square(vpred - R)
   vf_losses2 = tf.square(vpredclipped - R)
   # TODO: add sample weight here. also pg_loss, distill_loos, entropy
-  vf_loss = .5 * tf.reduce_mean(tf.maximum(vf_losses1, vf_losses2), axis=0)
+  if batch_sam_weight is not None:
+    vf_loss = .5 * tf.reduce_sum(tf.maximum(vf_losses1, vf_losses2) * batch_sam_weight,
+                                 axis=0) / (tf.reduce_sum(batch_sam_weight) + 1e-8)
+  else:
+    vf_loss = .5 * tf.reduce_mean(tf.maximum(vf_losses1, vf_losses2), axis=0)
   pg_losses1 = -adv * ratio
   pg_losses2 = -adv * tf.clip_by_value(ratio, 1.0 - clip_range,
                                        1.0 + clip_range)
-  pg_loss = tf.reduce_sum(tf.reduce_mean(
-    tf.where(tf.greater(tf.tile(adv, [1, ratio.shape[-1]]), 0),
-             tf.maximum(pg_losses1, pg_losses2), pg_losses2), axis=0))
+  pg_losses3 = -adv * tf.clip_by_value(ratio, 1.0 - clip_range,
+                                       1.0 + clip_range_lower)
+  ppo_loss_final = tf.where(tf.greater(tf.tile(adv, [1, ratio.shape[-1]]), 0),
+                            tf.maximum(pg_losses1, pg_losses2), pg_losses3)  # (batch, head_dim)
+  if batch_sam_weight is not None:
+    ppo_loss_final = ppo_loss_final * batch_sam_weight
+    pg_loss = tf.reduce_sum(tf.reduce_sum(ppo_loss_final, axis=0) / (tf.reduce_sum(batch_sam_weight)) + 1e-8)
+  else:
+    pg_loss = tf.reduce_sum(tf.reduce_mean(ppo_loss_final, axis=0))
   return pg_loss, vf_loss
 
 
 def ppo2_loss(neglogp, oldneglogp, vpred, R, mask=None, adv_normalize=True,
-              clip_range=0.1, sync_statistics=None):
+              clip_range=0.1, clip_range_lower=0.1, sync_statistics=None):
   """"PPO2 loss.
 
   The PPO implementation where the values are computed at the learner's end,
@@ -256,17 +332,20 @@ def ppo2_loss(neglogp, oldneglogp, vpred, R, mask=None, adv_normalize=True,
     import horovod.tensorflow as hvd
     batch_mean = hvd.allreduce(batch_mean, average=True)
     batch_mean_square = hvd.allreduce(batch_mean_square, average=True)
+  batch_std = tf.sqrt(batch_mean_square - tf.square(batch_mean))
   if adv_normalize:
-    batch_var = batch_mean_square - tf.square(batch_mean)
-    adv = (adv - batch_mean) / tf.sqrt(batch_var + 1e-8)
+    adv = (adv - batch_mean) / (batch_std + 1e-8)
 
   # the ppo policy gradient loss
   pg_losses1 = -adv * ratio
   pg_losses2 = -adv * tf.clip_by_value(ratio, 1.0 - clip_range,
                                        1.0 + clip_range)
-  # pg_loss = tf.reduce_mean(tf.maximum(pg_losses1, pg_losses2))
+  pg_losses3 = -adv * tf.clip_by_value(ratio, 1.0 - clip_range,
+                                       1.0 + clip_range_lower)
+  # pg_loss = tf.reduce_mean(tf.maximum(pg_losses1, pg_losses2))  ## the original PPO
+  # dual clip PPO
   pg_loss = tf.reduce_mean(
-    tf.where(tf.greater(adv, 0), tf.maximum(pg_losses1, pg_losses2), pg_losses2))
+    tf.where(tf.greater(adv, 0), tf.maximum(pg_losses1, pg_losses2), pg_losses3))
   return pg_loss
 
 
@@ -356,4 +435,11 @@ def vtrace_loss(neglogp, oldneglogp, mask, values, rewards, discounts,
       loss = tf.reduce_mean(tf.stop_gradient(adv) * neglogp[:-1])
     else:
       loss = tf.reduce_mean(mask[:-1] * tf.stop_gradient(adv) * neglogp[:-1])
+  return loss
+
+
+def supervised_loss(label, predict):
+  soft_logits = tf.nn.softmax(predict)
+  soft_logits = tf.clip_by_value(soft_logits, 0.000001, 0.999999)
+  loss = -tf.reduce_sum(label * tf.log(soft_logits), axis=1)
   return loss

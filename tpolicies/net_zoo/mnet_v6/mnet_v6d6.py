@@ -56,6 +56,13 @@ def mnet_v6d6(inputs: MNetV6Inputs,
     1. using AStar-like glu
     2. using AStar-like func embed
   other differences from v6d3 are same as v6d5 """
+
+  if nc.use_rule_mask:
+    # ONLY use rule mask for actor policy
+    # no need to care about inputs.X['MASK_RULE_ACTIVATE'], since if not activated
+    # inputs.X['MASK_AB'] == inputs.X['MASK_RULE_AB']
+    inputs.X['MASK_AB'] = inputs.X['MASK_RULE_AB']
+
   with tf.variable_scope(scope, default_name='mnet_v6d6') as sc:
     # NOTE: use name_scope, in case multiple parameter-sharing nets are built
     net_name_scope = tf.get_default_graph().get_name_scope()
@@ -674,7 +681,7 @@ def mnet_v6d6_loss(inputs: MNetV6Inputs,
             example_ac_sp, lambda head: head.pd, outer_fed_heads)
           distill_loss = tp_losses.distill_loss(
             student_pds=outer_fed_head_pds,
-            teacher_logits=inputs.flatparam,
+            teacher_flatparam=inputs.flatparam,
             masks=structured_mw)
           ab_pd = outer_fed_head_pds['A_AB']
           teacher_logit = inputs.flatparam['A_AB']
@@ -688,6 +695,18 @@ def mnet_v6d6_loss(inputs: MNetV6Inputs,
             tf.float32)
           ab_distill_loss = tp_losses.distill_loss(ab_pd, teacher_logit,
                                                    first_4mins_mask)
+        # RGPS loss
+        if nc.use_rgps_loss:
+          rgps_loss_mask = tf.cast(inputs.X['MASK_RULE_ACTIVATE'], tf.float32)
+          outer_fed_head_pds = nest.map_structure_up_to(
+            example_ac_sp, lambda head: head.pd, outer_fed_heads)
+          ab_pd = outer_fed_head_pds['A_AB']
+          teacher_logit = - tf.cast(tf.logical_not(inputs.X['MASK_RULE_AB']), dtype=tf.float32) * 1e20
+          rgps_loss = tp_losses.rgps_loss(ab_pd, teacher_logit, rgps_loss_mask)
+          labels = tf.cast(inputs.X['MASK_RULE_AB'], dtype=tf.float32)
+          labels /= (tf.reduce_sum(labels, axis=1, keepdims=True) + 1e-20)
+          rule_active_prob = tf.reduce_mean(rgps_loss_mask)
+          approx_pi = tf.reduce_mean(tf.exp(-ab_pd.neglogp(labels)) * rgps_loss_mask)
 
         # the main policy gradient loss
         outer_fed_head_neglogp = nest.map_structure_up_to(
@@ -838,6 +857,10 @@ def mnet_v6d6_loss(inputs: MNetV6Inputs,
           for k, v in distill_loss.items():
             loss_endpoints['distill_' + k] = v
           loss_endpoints['distill_ab_bf4mins'] = ab_distill_loss
+        if nc.use_rgps_loss:
+          loss_endpoints['rgps_loss'] = rgps_loss
+          loss_endpoints['rule_active_prob'] = rule_active_prob
+          loss_endpoints['approx_pi'] = approx_pi
     else:
       print('use_loss_type: {}. Nothing done.'.format(nc.use_loss_type))
       pass

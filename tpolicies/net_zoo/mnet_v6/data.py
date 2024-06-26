@@ -228,6 +228,9 @@ class MNetV6Config(object):
     self.zstat_embed_version = 'v3'
     self.value_net_version = 'v2'
     self.n_v = 6
+    # RGPS usage
+    self.use_rule_mask = False
+    self.use_rgps_loss = False
 
     # allow partially overwriting
     for k, v in kwargs.items():

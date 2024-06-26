@@ -929,7 +929,7 @@ def _zstat_connections(inputs_zstat_bo,
   z_mask = tf.unstack(z_mask, axis=1)
   with tf.variable_scope("z_enc"):
     z_bo_lstm_embeds, _ = tp_layers.lstm(inputs_x_seq=z_bo_b2s,
-                                         inputs_terminal_mask_seq=z_mask,
+                                         inputs_start_mask_seq=z_mask,
                                          inputs_state=hs[:, 0, :], nh=32,
                                          scope='z_lstm',
                                          use_layer_norm=use_ln)
@@ -986,13 +986,13 @@ def _zstat_connections_v2(inputs_zstat_bo,
   # lstm part
   with tf.variable_scope("z_enc"):
     z_bo_lstm_embeds, _ = tp_layers.lstm(inputs_x_seq=z_bo_b2s,
-                                         inputs_terminal_mask_seq=z_bo_mask,
+                                         inputs_start_mask_seq=z_bo_mask,
                                          inputs_state=bo_hs[:, 0, :], nh=32,
                                          scope='z_lstm_bo',
                                          use_layer_norm=use_ln)
 
     z_bobt_lstm_embeds, _ = tp_layers.lstm(inputs_x_seq=z_bobt_b2s,
-                                           inputs_terminal_mask_seq=z_bobt_mask,
+                                           inputs_start_mask_seq=z_bobt_mask,
                                            inputs_state=bobt_hs[:, 0, :], nh=32,
                                            scope='z_lstm_bobt',
                                            use_layer_norm=use_ln)
@@ -1160,13 +1160,13 @@ def _zstat_connections_v4(inputs_zstat_bo,
   # lstm part
   with tf.variable_scope("z_enc"):
     z_bo_lstm_embeds, _ = tp_layers.lstm(inputs_x_seq=z_bo_b2s,
-                                         inputs_terminal_mask_seq=z_bo_mask,
+                                         inputs_start_mask_seq=z_bo_mask,
                                          inputs_state=bo_hs[:, 0, :], nh=32,
                                          scope='z_lstm_bo',
                                          use_layer_norm=use_ln)
 
     z_bobt_lstm_embeds, _ = tp_layers.lstm(inputs_x_seq=z_bobt_b2s,
-                                           inputs_terminal_mask_seq=z_bobt_mask,
+                                           inputs_start_mask_seq=z_bobt_mask,
                                            inputs_state=bobt_hs[:, 0, :], nh=32,
                                            scope='z_lstm_bobt',
                                            use_layer_norm=use_ln)
@@ -1223,7 +1223,7 @@ def _zstat_connections_v5(inputs_zstat_bo,
   # lstm part
   with tf.variable_scope("z_enc"):
     z_bo_lstm_embeds, _ = tp_layers.lstm(inputs_x_seq=z_bo_b2s,
-                                         inputs_terminal_mask_seq=z_bo_mask,
+                                         inputs_start_mask_seq=z_bo_mask,
                                          inputs_state=bo_hs[:, 0, :], nh=32,
                                          scope='z_lstm_bo',
                                          use_layer_norm=use_ln)

@@ -169,6 +169,61 @@ def ln(inputs,
 
 
 @add_arg_scope
+def bn(inputs,
+       epsilon=1e-8,
+       begin_norm_axis=1,
+       activation_fn=None,
+       enable_openai_impl=False,
+       scope=None):
+  """Applies layer normalization.
+
+  See https://arxiv.org/abs/1607.06450.
+  CAUTION: presume the last dim (shape[-1]) being the feature dim!!
+  TODO(lxhan): following the comment from
+  https://stackoverflow.com/questions/33949786/how-could-i-use-batch-normalization-in-tensorflow
+  not an official implementation
+
+  Args:
+    inputs: A tensor with 2 or more dimensions, where the first dimension
+      has `batch_size`.
+    epsilon: A floating number. A very small number for preventing ZeroDivision
+      Error.
+    begin_norm_axis: beginning dim
+    activation_fn: activation function. None means no activation.
+    enable_openai_impl:
+    scope: Optional scope for `variable_scope`.
+
+  Returns:
+    A tensor with the same shape and data dtype as `inputs`.
+  """
+  with tf.variable_scope(scope, default_name="ln"):
+    inputs_shape = inputs.get_shape()
+    params_shape = inputs_shape[begin_norm_axis:]
+    inputs_rank = inputs_shape.ndims
+    if begin_norm_axis < 0:
+      begin_norm_axis = inputs_rank + begin_norm_axis
+    if begin_norm_axis >= inputs_rank:
+      raise ValueError('begin_norm_axis (%d) must be < rank(inputs) (%d)' %
+                       (begin_norm_axis, inputs_rank))
+    norm_axes = 0  # the first dim must be the batch dim
+    mean, variance = tf.nn.moments(inputs, norm_axes, keep_dims=True)
+    beta = tf.get_variable("beta", params_shape,
+                           initializer=tf.zeros_initializer())
+    gamma = tf.get_variable("gamma", params_shape,
+                            initializer=tf.ones_initializer())
+    if enable_openai_impl:
+      normalized = (inputs - mean) / tf.sqrt(variance + epsilon)
+      outputs = normalized * gamma + beta
+    else:
+      normalized = (inputs - mean) / ((variance + epsilon) ** (.5))
+      outputs = gamma * normalized + beta
+    if activation_fn is not None:
+      outputs = activation_fn(outputs)
+
+  return outputs
+
+
+@add_arg_scope
 def inst_ln(inputs,
             epsilon=1e-8,
             enable_openai_impl=False,
@@ -1271,7 +1326,7 @@ def ff(inputs, num_units, scope=None):
 # rnn stuff
 @add_arg_scope
 def lstm(inputs_x_seq: list,
-         inputs_terminal_mask_seq: list,
+         inputs_start_mask_seq: list,
          inputs_state,
          nh,
          forget_bias=1.0,
@@ -1288,8 +1343,8 @@ def lstm(inputs_x_seq: list,
 
   Args:
     inputs_x_seq: list of rollout_len Tensors, each sized (nrollout, dim)
-    inputs_terminal_mask_seq: list of rollout_len Tensors, each sized
-     (nrollout, 1). A  mask that indicates whether it is terminal of an
+    inputs_start_mask_seq: list of rollout_len Tensors, each sized
+     (nrollout, 1). A  mask that indicates whether it is start of an
      unroll.
     inputs_state: Tensor, (nrollout, 2*nh), initial hidden state of the input
      rollout
@@ -1304,7 +1359,7 @@ def lstm(inputs_x_seq: list,
     A Tensor, the updated hidden state
   """
   # shorter names
-  xs, ms, s = inputs_x_seq, inputs_terminal_mask_seq, inputs_state
+  xs, ms, s = inputs_x_seq, inputs_start_mask_seq, inputs_state
   nbatch, nin = [v.value for v in xs[0].get_shape()]
   with tf.variable_scope(scope, default_name='lstm'):
     # weights & biases
@@ -2135,7 +2190,7 @@ def lstm_embed_block(inputs_x, inputs_hs, inputs_mask, nc,
     initial_hs = inputs_hs[:, 0, :]
     if nc.lstm_cell_type == 'lstm':
       lstm_embed, hs_new = lstm(inputs_x_seq=x_seq,
-                                inputs_terminal_mask_seq=hsm_seq,
+                                inputs_start_mask_seq=hsm_seq,
                                 inputs_state=initial_hs,
                                 nh=nc.nlstm,
                                 forget_bias=nc.forget_bias,
