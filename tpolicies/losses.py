@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.contrib.framework import nest
+from tensorflow.python.util import nest
 from tpolicies.utils.distributions import MaskSeqCategoricalPd
 from tpolicies.utils.sequence_ops import multistep_forward_view
 from tpolicies.utils.vtrace_ops import vtrace_from_importance_weights

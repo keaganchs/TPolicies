@@ -10,3 +10,4 @@ __pycache__
 *.pyc
 *.json
 .DS_Store
+.ruff_cache/

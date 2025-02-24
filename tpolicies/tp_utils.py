@@ -2,13 +2,13 @@ from collections import OrderedDict
 
 import tensorflow as tf
 
-from gym.spaces import Space
-from gym.spaces import Discrete
-from gym.spaces import MultiDiscrete
-from gym.spaces import Box
-from gym.spaces import MultiBinary
-from gym.spaces import Tuple as GymTuple
-from gym.spaces import Dict as GymDict
+from gymnasium.spaces import Space
+from gymnasium.spaces import Discrete
+from gymnasium.spaces import MultiDiscrete
+from gymnasium.spaces import Box
+from gymnasium.spaces import MultiBinary
+from gymnasium.spaces import Tuple as GymTuple
+from gymnasium.spaces import Dict as GymDict
 
 
 # placeholders stuff
