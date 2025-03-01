@@ -17,6 +17,6 @@ setup(
       # 'tensorflow',
       'numpy',
       'joblib',
-      'gym==0.12.1'
+      'gymnasium==1.1'
     ]
 )
