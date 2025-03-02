@@ -5,6 +5,9 @@ from tpolicies.utils.sequence_ops import multistep_forward_view
 from tpolicies.utils.vtrace_ops import vtrace_from_importance_weights
 
 
+import keras
+from keras import layers
+
 def multi_head_xe_loss(inputs_action_logits,
                        inputs_action_labels,
                        inputs_mask_weights):
@@ -27,16 +30,16 @@ def multi_head_xe_loss(inputs_action_logits,
     if a_logits.shape.rank == a_label.shape.rank:
       # deemed as MultiBinary (multi label, each is zero/one)
       # e.g., a_label: (bs, 600), a_logits: (bs, 600)
-      loss = tf.losses.sigmoid_cross_entropy(
+      loss = tf.compat.v1.losses.sigmoid_cross_entropy(
         multi_class_labels=a_label, logits=a_logits, weights=weight,
-        reduction=tf.losses.Reduction.NONE  # keep the batch_size dim
+        reduction=tf.compat.v1.losses.Reduction.NONE  # keep the batch_size dim
       )
     else:
       # deemed as Discrete (mutually exclusive multi-class)
       # e.g., a_label: (bs, d1,..., dM), a_logits: (bs, d1,..., dM, K)
-      loss = tf.losses.sparse_softmax_cross_entropy(
+      loss = tf.compat.v1.losses.sparse_softmax_cross_entropy(
         labels=a_label, logits=a_logits, weights=weight,
-        reduction=tf.losses.Reduction.NONE  # keep the batch_size dim
+        reduction=tf.compat.v1.losses.Reduction.NONE  # keep the batch_size dim
       )
     # make sure the loss in shape (bs,)
     while loss.shape.rank > 1:
