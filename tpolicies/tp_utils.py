@@ -2,6 +2,8 @@ from collections import OrderedDict
 
 import tensorflow as tf
 
+import gymnasium as gym
+
 from gymnasium.spaces import Space
 from gymnasium.spaces import Discrete
 from gymnasium.spaces import MultiDiscrete
