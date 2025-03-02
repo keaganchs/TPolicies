@@ -3,10 +3,18 @@ from collections import namedtuple
 from functools import partial
 
 import tensorflow as tf
-from tensorflow.contrib.framework import add_arg_scope
-import tensorflow.contrib.layers as tfc_layers
-from tensorflow.contrib.layers.python.layers import utils as lutils
-from tensorflow.contrib.layers import xavier_initializer
+
+import keras
+from keras import layers
+
+from keras.initializers.initializers_v1 import _v1_glorot_normal_initializer
+
+# import tensorflow.contrib.layers as tfc_layers
+# from tensorflow.contrib.layers.python.layers import utils as lutils
+# from tensorflow.contrib.layers import xavier_initializer
+# tf.compat.v1.keras.initializers.glorot_normal
+
+
 
 import tpolicies.ops as tp_ops
 from tpolicies import ops as tp_ops
@@ -17,7 +25,7 @@ from tpolicies.utils.distributions import MaskSeqCategoricalPdType
 from tpolicies.utils.distributions import DiagGaussianPdType
 
 
-@add_arg_scope
+
 def identity_layer(inputs, outputs_collections=None, scope=None):
   """Identity layer.
 
@@ -30,12 +38,15 @@ def identity_layer(inputs, outputs_collections=None, scope=None):
     A outputs `Tensor`.
 
   """
-  with tf.variable_scope(scope, default_name='identity_layer') as sc:
+  with tf.compat.v1.variable_scope(scope, default_name='identity_layer') as sc:
     outputs = tf.identity(inputs)
-  return lutils.collect_named_outputs(outputs_collections, sc.name, outputs)
+
+    if outputs_collections is not None:
+        outputs_collections[sc.name] = outputs
+    return outputs
 
 
-@add_arg_scope
+
 def glu(inputs, context, output_size, outputs_collections=None, scope=None):
   """Gated Linear Units.
 
@@ -55,20 +66,23 @@ def glu(inputs, context, output_size, outputs_collections=None, scope=None):
   inputs_shape = inputs.get_shape().as_list()
   assert len(inputs_shape) == 2
   inputs_size = inputs_shape[1]
-  with tf.variable_scope(scope, default_name='glu') as sc:
-    # NOTE(pengsun): activation_fn must be None
+  with tf.compat.v1.variable_scope(scope, default_name='glu') as sc:
+    # NOTE(pengsun): activation must be None
     gate = tf.nn.sigmoid(
-      tfc_layers.fully_connected(context, inputs_size, activation_fn=None)
+      layers.Dense(inputs_size, activation=None)(context)
     )
     gated_inputs = tf.math.multiply(gate, inputs)  # elementwise times
-    # NOTE(pengsun): activation_fn must be None
-    outputs = tfc_layers.fully_connected(gated_inputs, output_size,
-                                         activation_fn=None)
-    return lutils.collect_named_outputs(outputs_collections, sc.name, outputs)
+    # NOTE(pengsun): activation must be None
+    outputs = layers.Dense(output_size, activation=None)(gated_inputs)
+
+    if outputs_collections is not None:
+        outputs_collections[sc.name] = outputs
+    return outputs
+
 
 
 # sparse embedding stuff
-@add_arg_scope
+
 def linear_embed(inputs,
                  vocab_size,
                  enc_size,
@@ -97,8 +111,8 @@ def linear_embed(inputs,
   Returns:
     An outputs `Tensor`.
   """
-  with tf.variable_scope(scope, default_name='linear_embed') as sc:
-    weights = tf.get_variable('weights', (vocab_size, enc_size),
+  with tf.compat.v1.variable_scope(scope, default_name='linear_embed') as sc:
+    weights = tf.compat.v1.get_variable('weights', (vocab_size, enc_size),
                               initializer=weights_initializer,
                               regularizer=weights_regularizer)
     if not inverse_embed:
@@ -110,16 +124,18 @@ def linear_embed(inputs,
         'inputs must be a dense tensor')
       outputs = tf.matmul(inputs, weights, transpose_b=True)
       outputs_alias = sc.name + '_inverse'
-    return lutils.collect_named_outputs(outputs_collections, outputs_alias,
-                                        outputs)
+
+    if outputs_collections is not None:
+        outputs_collections[outputs_alias] = outputs
+    return outputs
 
 
 # normalization stuff
-@add_arg_scope
+
 def ln(inputs,
        epsilon=1e-8,
        begin_norm_axis=-1,
-       activation_fn=None,
+       activation=None,
        enable_openai_impl=False,
        scope=None):
   """Applies layer normalization.
@@ -134,14 +150,14 @@ def ln(inputs,
     epsilon: A floating number. A very small number for preventing ZeroDivision
       Error.
     begin_norm_axis: beginning dim
-    activation_fn: activation function. None means no activation.
+    activation: activation function. None means no activation.
     enable_openai_impl:
     scope: Optional scope for `variable_scope`.
 
   Returns:
     A tensor with the same shape and data dtype as `inputs`.
   """
-  with tf.variable_scope(scope, default_name="ln"):
+  with tf.compat.v1.variable_scope(scope, default_name="ln"):
     inputs_shape = inputs.get_shape()
     params_shape = inputs_shape[-1:]
     inputs_rank = inputs_shape.ndims
@@ -152,9 +168,9 @@ def ln(inputs,
                        (begin_norm_axis, inputs_rank))
     norm_axes = list(range(begin_norm_axis, inputs_rank))
     mean, variance = tf.nn.moments(inputs, norm_axes, keep_dims=True)
-    beta = tf.get_variable("beta", params_shape,
+    beta = tf.compat.v1.get_variable("beta", params_shape,
                            initializer=tf.zeros_initializer())
-    gamma = tf.get_variable("gamma", params_shape,
+    gamma = tf.compat.v1.get_variable("gamma", params_shape,
                             initializer=tf.ones_initializer())
     if enable_openai_impl:
       normalized = (inputs - mean) / tf.sqrt(variance + epsilon)
@@ -162,17 +178,17 @@ def ln(inputs,
     else:
       normalized = (inputs - mean) / ((variance + epsilon) ** (.5))
       outputs = gamma * normalized + beta
-    if activation_fn is not None:
-      outputs = activation_fn(outputs)
+    if activation is not None:
+      outputs = activation(outputs)
 
   return outputs
 
 
-@add_arg_scope
+
 def bn(inputs,
        epsilon=1e-8,
        begin_norm_axis=1,
-       activation_fn=None,
+       activation=None,
        enable_openai_impl=False,
        scope=None):
   """Applies layer normalization.
@@ -189,14 +205,14 @@ def bn(inputs,
     epsilon: A floating number. A very small number for preventing ZeroDivision
       Error.
     begin_norm_axis: beginning dim
-    activation_fn: activation function. None means no activation.
+    activation: activation function. None means no activation.
     enable_openai_impl:
     scope: Optional scope for `variable_scope`.
 
   Returns:
     A tensor with the same shape and data dtype as `inputs`.
   """
-  with tf.variable_scope(scope, default_name="ln"):
+  with tf.compat.v1.variable_scope(scope, default_name="ln"):
     inputs_shape = inputs.get_shape()
     params_shape = inputs_shape[begin_norm_axis:]
     inputs_rank = inputs_shape.ndims
@@ -207,9 +223,9 @@ def bn(inputs,
                        (begin_norm_axis, inputs_rank))
     norm_axes = 0  # the first dim must be the batch dim
     mean, variance = tf.nn.moments(inputs, norm_axes, keep_dims=True)
-    beta = tf.get_variable("beta", params_shape,
+    beta = tf.compat.v1.get_variable("beta", params_shape,
                            initializer=tf.zeros_initializer())
-    gamma = tf.get_variable("gamma", params_shape,
+    gamma = tf.compat.v1.get_variable("gamma", params_shape,
                             initializer=tf.ones_initializer())
     if enable_openai_impl:
       normalized = (inputs - mean) / tf.sqrt(variance + epsilon)
@@ -217,17 +233,17 @@ def bn(inputs,
     else:
       normalized = (inputs - mean) / ((variance + epsilon) ** (.5))
       outputs = gamma * normalized + beta
-    if activation_fn is not None:
-      outputs = activation_fn(outputs)
+    if activation is not None:
+      outputs = activation(outputs)
 
   return outputs
 
 
-@add_arg_scope
+
 def inst_ln(inputs,
             epsilon=1e-8,
             enable_openai_impl=False,
-            activation_fn=None,
+            activation=None,
             scope=None):
   """Applies Instance normalization.
 
@@ -239,22 +255,22 @@ def inst_ln(inputs,
       has `batch_size`.
     epsilon: A floating number. A very small number for preventing ZeroDivision
       Error.
-    activation_fn: activation function. None means no activation.
+    activation: activation function. None means no activation.
     enable_openai_impl:
     scope: Optional scope for `variable_scope`.
 
   Returns:
     A tensor with the same shape and data dtype as `inputs`.
   """
-  with tf.variable_scope(scope, default_name="inst_ln"):
+  with tf.compat.v1.variable_scope(scope, default_name="inst_ln"):
     inputs_shape = inputs.get_shape()
     params_shape = inputs_shape[-1:]
     inputs_rank = inputs_shape.ndims
     norm_axes = list(range(1, inputs_rank - 1))
     mean, variance = tf.nn.moments(inputs, norm_axes, keep_dims=True)
-    beta = tf.get_variable("beta", params_shape,
+    beta = tf.compat.v1.get_variable("beta", params_shape,
                            initializer=tf.zeros_initializer())
-    gamma = tf.get_variable("gamma", params_shape,
+    gamma = tf.compat.v1.get_variable("gamma", params_shape,
                             initializer=tf.ones_initializer())
     if enable_openai_impl:
       normalized = (inputs - mean) / tf.sqrt(variance + epsilon)
@@ -262,14 +278,14 @@ def inst_ln(inputs,
     else:
       normalized = (inputs - mean) / ((variance + epsilon) ** (.5))
       outputs = gamma * normalized + beta
-    if activation_fn is not None:
-      outputs = activation_fn(outputs)
+    if activation is not None:
+      outputs = activation(outputs)
 
   return outputs
 
 
 # dense-/res- net stuff
-@add_arg_scope
+
 def dense_sum_blocks(inputs, n, enc_dim, layer_norm: bool = True,
                      outputs_collections=None, scope=None):
   """Dense-sum blocks with fully connected layers.
@@ -285,11 +301,11 @@ def dense_sum_blocks(inputs, n, enc_dim, layer_norm: bool = True,
   Returns:
     An outputs `Tensor`.
   """
-  with tf.variable_scope(scope, default_name='densesum_blks') as sc:
+  with tf.compat.v1.variable_scope(scope, default_name='densesum_blks') as sc:
     embed = inputs
     pre_embeds_sum = None
     for i in range(n):
-      embed = tfc_layers.fully_connected(embed, enc_dim)
+      embed = layers.Dense(enc_dim)(embed)
       if i == 0:
         pre_embeds_sum = embed
       else:
@@ -297,10 +313,12 @@ def dense_sum_blocks(inputs, n, enc_dim, layer_norm: bool = True,
       embed = pre_embeds_sum
       if layer_norm:
         embed = ln(embed, epsilon=1e-8, scope='ln_'+str(i))
-  return lutils.collect_named_outputs(outputs_collections, sc.name, embed)
+  
+  if outputs_collections is not None:
+      outputs_collections[sc.name] = embed
+  return embed
 
 
-@add_arg_scope
 def dense_sum_conv_blocks(inputs, n, ch_dim, k_size,
                           mode: str = '2d',
                           layer_norm: bool = True,
@@ -321,22 +339,22 @@ def dense_sum_conv_blocks(inputs, n, ch_dim, k_size,
   Returns:
     An outputs `Tensor`.
   """
-  with tf.variable_scope(
+  with tf.compat.v1.variable_scope(
       scope,
       default_name='densesum_conv{}_blks'.format(mode)) as sc:
     embed = inputs
     pre_embeds_sum = None
     if mode == '2d':
-      conv_layer = tfc_layers.conv2d
+      conv_layer = layers.Conv2D
       kernel_size = [k_size, k_size]
     elif mode == '1d':
-      conv_layer = tfc_layers.conv1d
+      conv_layer = layers.Conv1D
       kernel_size = k_size
     else:
       raise ValueError('Unknown mode {}.'.format(mode))
 
     for i in range(n):
-      embed = conv_layer(embed, ch_dim, kernel_size)
+      embed = conv_layer(ch_dim, kernel_size)(embed)
       if i == 0:
         pre_embeds_sum = embed
       else:
@@ -344,10 +362,12 @@ def dense_sum_conv_blocks(inputs, n, ch_dim, k_size,
       embed = pre_embeds_sum
       if layer_norm:
         embed = ln(embed, epsilon=1e-8, scope='ln_'+str(i))
-  return lutils.collect_named_outputs(outputs_collections, sc.name, embed)
+  
+  if outputs_collections is not None:
+      outputs_collections[sc.name] = embed
+  return embed
 
 
-@add_arg_scope
 def res_sum_blocks(inputs,
                    n_blk: int,
                    n_skip: int,
@@ -379,7 +399,7 @@ def res_sum_blocks(inputs,
     A Tensor, the outputs, (batch_size, enc_dim)
   """
   embed = inputs
-  with tf.variable_scope(scope, default_name='res_sum_blks') as sc:
+  with tf.compat.v1.variable_scope(scope, default_name='res_sum_blks') as sc:
     for i in range(n_blk):
       blk_inputs_dim = embed.shape[-1].value  # last dim as feature dim
       # shortcut connection
@@ -387,30 +407,27 @@ def res_sum_blocks(inputs,
       if blk_inputs_dim == enc_dim:
         shortcut = identity_layer(embed, scope=shortcut_scope)
       else:
-        shortcut = tfc_layers.fully_connected(embed, enc_dim,
-                                              activation_fn=None,
-                                              scope=shortcut_scope)
+        shortcut = layers.Dense(enc_dim, activation=None,
+                                scope=shortcut_scope)(embed)
       # residual connection
       if relu_input:
         embed = tf.nn.relu(embed)
       for j in range(n_skip-1):
-        embed = tfc_layers.fully_connected(embed, enc_dim,
-                                           activation_fn=tf.nn.relu,
-                                           scope='blk{}_fc{}'.format(i, j))
-      embed = tfc_layers.fully_connected(embed, enc_dim, activation_fn=None,
-                                         scope='blk{}_fc{}'.format(
-                                           i, n_skip - 1)
-                                         )
+        embed = layers.Dense(enc_dim, activation=tf.nn.relu,
+                              scope='blk{}_fc{}'.format(i, j))(embed)
+      embed = layers.Dense(enc_dim, activation=None,
+                            scope='blk{}_fc{}'.format(i, n_skip - 1))(embed)
       # shortcut + residual
       combined = shortcut + embed
       if layer_norm:
         combined = ln(combined, epsilon=1e-8, scope='ln_'+str(i))
       embed = tf.nn.relu(combined)
-  return lutils.collect_named_outputs(outputs_collections,
-                                      sc.original_name_scope, embed)
+
+  if outputs_collections is not None:
+      outputs_collections[sc.original_name_scope] = embed
+  return embed
 
 
-@add_arg_scope
 def res_sum_blocks_v2(inputs,
                       n_blk: int,
                       n_skip: int,
@@ -451,7 +468,7 @@ def res_sum_blocks_v2(inputs,
     A Tensor, the outputs, (batch_size, enc_dim)
   """
   embed = inputs
-  with tf.variable_scope(scope, default_name='res_sum_blks_v2') as sc:
+  with tf.compat.v1.variable_scope(scope, default_name='res_sum_blks_v2') as sc:
     for i in range(n_blk):
       blk_inputs_dim = embed.shape[-1].value  # last dim as feature dim
 
@@ -467,20 +484,20 @@ def res_sum_blocks_v2(inputs,
         if layer_norm:
           embed = ln(embed, epsilon=1e-8, scope='ln_blk{}_fc{}'.format(i, j))
         embed = tf.nn.relu(embed)
-        embed = tfc_layers.fully_connected(
-          embed, enc_dim,
-          activation_fn=None,
-          biases_initializer=None if layer_norm else tf.zeros_initializer(),
+        embed = layers.Dense(
+          enc_dim,
+          activation=None,
+          bias_initializer=None if layer_norm else 'zeros',
           scope='blk{}_fc{}'.format(i, j)
-        )
+        )(embed)
       # combine: shortcut + residual
       embed = shortcut + embed
 
-  return lutils.collect_named_outputs(outputs_collections,
-                                      sc.original_name_scope, embed)
+  if outputs_collections is not None:
+      outputs_collections[sc.original_name_scope] = embed
+  return embed
 
 
-@add_arg_scope
 def res_sum_conv_blocks(inputs,
                         n_blk: int,
                         n_skip: int,
@@ -515,17 +532,17 @@ def res_sum_conv_blocks(inputs,
   embed = inputs
   # Note the tfc_layers.convXd padding defaults to SAME
   if mode == '2d':
-    conv_layer = tfc_layers.conv2d
+    conv_layer = layers.Conv2D
     shortcut_k_size = [1, 1]
     k_size = [k_size, k_size]
   elif mode == '1d':
-    conv_layer = tfc_layers.conv1d
+    conv_layer = layers.Conv1D
     shortcut_k_size = 1
     k_size = k_size
   else:
     raise ValueError('Unknown mode {}'.format(mode))
 
-  with tf.variable_scope(scope,
+  with tf.compat.v1.variable_scope(scope,
                          default_name='res_conv{}_blks'.format(mode)) as sc:
     for i in range(n_blk):
       blk_inputs_dim = embed.shape[-1].value  # last dim as channel dim
@@ -534,24 +551,25 @@ def res_sum_conv_blocks(inputs,
       if blk_inputs_dim == ch_dim:
         shortcut = identity_layer(embed, scope=shortcut_scope)
       else:
-        shortcut = conv_layer(embed, ch_dim, shortcut_k_size,
-                              activation_fn=None, scope=shortcut_scope)
+        shortcut = conv_layer(ch_dim, shortcut_k_size,
+                              activation=None, scope=shortcut_scope)(embed)
       # residual connection
       for j in range(n_skip-1):
-        embed = conv_layer(embed, ch_dim, k_size, activation_fn=tf.nn.relu,
-                           scope='blk{}_conv{}'.format(i, j))
-      embed = conv_layer(embed, ch_dim, k_size, activation_fn=None,
-                         scope='blk{}_conv{}'.format(i, n_skip - 1))
+        embed = conv_layer(ch_dim, k_size, activation='relu',
+                           scope='blk{}_conv{}'.format(i, j))(embed)
+      embed = conv_layer(ch_dim, k_size, activation=None,
+                         scope='blk{}_conv{}'.format(i, n_skip - 1))(embed)
       # shortcut + residual
       combined = shortcut + embed
       if layer_norm:
         combined = ln(combined, epsilon=1e-8, scope='ln_'+str(i))
       embed = tf.nn.relu(combined)
-  return lutils.collect_named_outputs(outputs_collections,
-                                      sc.original_name_scope, embed)
+
+  if outputs_collections is not None:
+      outputs_collections[sc.original_name_scope] = embed
+  return embed
 
 
-@add_arg_scope
 def res_sum_bottleneck_blocks(inputs,
                               n_blk: int,
                               n_skip: int,
@@ -590,17 +608,17 @@ def res_sum_bottleneck_blocks(inputs,
   embed = inputs
   # Note the tfc_layers.convXd padding defaults to SAME
   if mode == '2d':
-    conv_layer = tfc_layers.conv2d
+    conv_layer = layers.Conv2D
     one_size = [1, 1]
     k_size = [k_size, k_size]
   elif mode == '1d':
-    conv_layer = tfc_layers.conv1d
+    conv_layer = layers.Conv1D
     one_size = 1
     k_size = k_size
   else:
     raise ValueError('Unknown mode {}'.format(mode))
 
-  with tf.variable_scope(scope,
+  with tf.compat.v1.variable_scope(scope,
                          default_name='res_conv{}_blks'.format(mode)) as sc:
     for i in range(n_blk):
       blk_inputs_dim = embed.shape[-1].value  # last dim as channel dim
@@ -609,18 +627,18 @@ def res_sum_bottleneck_blocks(inputs,
       if blk_inputs_dim == ch_dim:
         shortcut = identity_layer(embed, scope=shortcut_scope)
       else:
-        shortcut = conv_layer(embed, ch_dim, one_size,
-                              activation_fn=None, scope=shortcut_scope)
+        shortcut = conv_layer(ch_dim, one_size,
+                              activation=None, scope=shortcut_scope)(embed)
       # residual connection
-      embed = conv_layer(embed, bottleneck_ch_dim, one_size,
-                         activation_fn=tf.nn.relu,
-                         scope='blk{}_conv{}'.format(i, 0))
+      embed = conv_layer(bottleneck_ch_dim, one_size,
+                         activation='relu',
+                         scope='blk{}_conv{}'.format(i, 0))(embed)
       for j in range(n_skip):
-        embed = conv_layer(embed, bottleneck_ch_dim, k_size,
-                           activation_fn=tf.nn.relu,
-                           scope='blk{}_conv{}'.format(i, j+1))
-      embed = conv_layer(embed, ch_dim, one_size, activation_fn=None,
-                         scope='blk{}_conv{}'.format(i, n_skip + 1))
+        embed = conv_layer(bottleneck_ch_dim, k_size,
+                           activation='relu',
+                           scope='blk{}_conv{}'.format(i, j+1))(embed)
+      embed = conv_layer(ch_dim, one_size, activation=None,
+                         scope='blk{}_conv{}'.format(i, n_skip + 1))(embed)
       # shortcut + residual
       combined = shortcut + embed
       if layer_norm:
@@ -632,9 +650,10 @@ def res_sum_bottleneck_blocks(inputs,
         else:
           raise KeyError('Unknown layer_norm_type {}'.format(layer_norm_type))
       embed = tf.nn.relu(combined)
-  return lutils.collect_named_outputs(outputs_collections,
-                                      sc.original_name_scope, embed)
 
+  if outputs_collections is not None:
+      outputs_collections[sc.original_name_scope] = embed
+  return embed
 
 def res_sum_bottleneck_blocks_v2(inputs,
                                  n_blk: int,
@@ -690,17 +709,17 @@ def res_sum_bottleneck_blocks_v2(inputs,
   embed = inputs
   # Note the tfc_layers.convXd padding defaults to SAME
   if mode == '2d':
-    conv_layer = tfc_layers.conv2d
+    conv_layer = layers.Conv2D
     k_size_one = [1, 1]
     k_size = [k_size, k_size]
   elif mode == '1d':
-    conv_layer = tfc_layers.conv1d
+    conv_layer = layers.Conv1D
     k_size_one = 1
     k_size = k_size
   else:
     raise ValueError('Unknown mode {}'.format(mode))
 
-  with tf.variable_scope(
+  with tf.compat.v1.variable_scope(
       scope,
       default_name='res_sum_bottleneck{}_blks_v2'.format(mode)) as sc:
     for i in range(n_blk):
@@ -728,28 +747,28 @@ def res_sum_bottleneck_blocks_v2(inputs,
             raise KeyError('Unknown layer_norm_type {}'.format(layer_norm_type))
         embed = tf.nn.relu(embed)
         # (bs, H, W, C)
-        embed = conv_layer(embed, bottleneck_ch_dim, k_size_one,
-                           activation_fn=tf.nn.relu,
-                           scope='blk{}_conv{}_0'.format(i, j))
+        embed = conv_layer(bottleneck_ch_dim, k_size_one,
+                           activation='relu',
+                           scope='blk{}_conv{}_0'.format(i, j))(embed)
         # (bs, H, W, BC)
-        embed = conv_layer(embed, bottleneck_ch_dim, k_size,
-                           activation_fn=tf.nn.relu,
-                           scope='blk{}_conv{}_1'.format(i, j))
+        embed = conv_layer(bottleneck_ch_dim, k_size,
+                           activation='relu',
+                           scope='blk{}_conv{}_1'.format(i, j))(embed)
         # (bs H, W, BC)
         embed = conv_layer(
-          embed, ch_dim, k_size_one,
-          activation_fn=None,
-          biases_initializer=(None if layer_norm_type else
-                              tf.zeros_initializer()),
+          ch_dim, k_size_one,
+          activation=None,
+          biases_initializer=(None if layer_norm_type else 'zeros'),
           scope='blk{}_conv{}_2'.format(i, j)
-        )
+        )(embed)
         # (bs, H, W, C)
 
       # combine: shortcut + residual
       embed = shortcut + embed
-  return lutils.collect_named_outputs(outputs_collections,
-                                      sc.original_name_scope, embed)
 
+  if outputs_collections is not None:
+      outputs_collections[sc.original_name_scope] = embed
+  return embed
 
 def res_sum_bottleneck_blocks_v3(inputs,
                                  n_blk: int,
@@ -806,17 +825,17 @@ def res_sum_bottleneck_blocks_v3(inputs,
   embed = inputs
   # Note the tfc_layers.convXd padding defaults to SAME
   if mode == '2d':
-    conv_layer = tfc_layers.conv2d
+    conv_layer = layers.Conv2D
     k_size_one = [1, 1]
     k_size = [k_size, k_size]
   elif mode == '1d':
-    conv_layer = tfc_layers.conv1d
+    conv_layer = layers.Conv1D
     k_size_one = 1
     k_size = k_size
   else:
     raise ValueError('Unknown mode {}'.format(mode))
 
-  with tf.variable_scope(
+  with tf.compat.v1.variable_scope(
       scope,
       default_name='res_sum_bottleneck{}_blks_v3'.format(mode)) as sc:
     for i in range(n_blk):
@@ -853,31 +872,31 @@ def res_sum_bottleneck_blocks_v3(inputs,
             raise KeyError('Unknown layer_norm_type {}'.format(layer_norm_type))
         embed = tf.nn.relu(embed)
         # (bs, H, W, C)
-        embed = conv_layer(embed, bottleneck_ch_dim, k_size_one,
-                           activation_fn=tf.nn.relu,
+        embed = conv_layer(bottleneck_ch_dim, k_size_one,
+                           activation='relu',
                            normalizer_fn=conv_norm,
-                           scope='blk{}_conv{}_0'.format(i, j))
+                           scope='blk{}_conv{}_0'.format(i, j))(embed)
         # (bs, H, W, BC)
-        embed = conv_layer(embed, bottleneck_ch_dim, k_size,
-                           activation_fn=tf.nn.relu,
+        embed = conv_layer(bottleneck_ch_dim, k_size,
+                           activation='relu',
                            normalizer_fn=conv_norm,
-                           scope='blk{}_conv{}_1'.format(i, j))
+                           scope='blk{}_conv{}_1'.format(i, j))(embed)
         # (bs H, W, BC)
         embed = conv_layer(
-          embed, ch_dim, k_size_one,
-          activation_fn=None,
+          ch_dim, k_size_one,
+          activation=None,
           normalizer_fn=None,
-          biases_initializer=(None if layer_norm_type else
-                              tf.zeros_initializer()),
+          biases_initializer=(None if layer_norm_type else 'zeros'),
           scope='blk{}_conv{}_2'.format(i, j)
-        )
+        )(embed)
         # (bs, H, W, C)
 
       # combine: shortcut + residual
       embed = shortcut + embed
-  return lutils.collect_named_outputs(outputs_collections,
-                                      sc.original_name_scope, embed)
 
+  if outputs_collections is not None:
+      outputs_collections[sc.original_name_scope] = embed
+  return embed
 
 # transformer stuff
 def trans_mask(inputs, queries=None, keys=None, mtype=None):
@@ -967,7 +986,7 @@ def scaled_dot_product_attention(Q, K, V,
     training: boolean for controlling droput
     scope: Optional scope for `variable_scope`.
   """
-  with tf.variable_scope(scope, default_name="scaled_dot_product_attention"):
+  with tf.compat.v1.variable_scope(scope, default_name="scaled_dot_product_attention"):
     d_k = Q.get_shape().as_list()[-1]
 
     # dot product
@@ -995,7 +1014,7 @@ def scaled_dot_product_attention(Q, K, V,
     outputs = trans_mask(outputs, Q, K, mtype="query")
 
     # dropout
-    outputs = tf.layers.dropout(outputs, rate=dropout_rate, training=training)
+    outputs = layers.Dropout(rate=dropout_rate, training=training)(outputs)
 
     # weighted sum (context vectors)
     outputs = tf.matmul(outputs, V)  # (N, T_q, d_v)
@@ -1016,7 +1035,7 @@ def scaled_dot_product_attention_v2(Q, K, V, matrix_mask,
     training: boolean for controlling droput
     scope: Optional scope for `variable_scope`.
   """
-  with tf.variable_scope(scope, default_name="scaled_dot_product_attention"):
+  with tf.compat.v1.variable_scope(scope, default_name="scaled_dot_product_attention"):
     d_k = Q.get_shape().as_list()[-1]
 
     # dot product
@@ -1040,7 +1059,7 @@ def scaled_dot_product_attention_v2(Q, K, V, matrix_mask,
     outputs = trans_mask(outputs, Q, K, mtype="query")
 
     # dropout
-    outputs = tf.layers.dropout(outputs, rate=dropout_rate, training=True)
+    outputs = layers.Dropout(rate=dropout_rate, training=True)(outputs)
 
     # weighted sum (context vectors)
     outputs = tf.matmul(outputs, V)  # (N, T_q, d_v)
@@ -1075,11 +1094,11 @@ def multihead_attention(queries, keys, values,
     A 3d tensor with shape of (N, T_q, C)
   """
   d_model = queries.get_shape().as_list()[-1]
-  with tf.variable_scope(scope, default_name='multihead_attention'):
+  with tf.compat.v1.variable_scope(scope, default_name='multihead_attention'):
     # Linear projections
-    Q = tf.layers.dense(queries, d_model, use_bias=False)  # (N, T_q, d_model)
-    K = tf.layers.dense(keys, d_model, use_bias=False)  # (N, T_k, d_model)
-    V = tf.layers.dense(values, d_model, use_bias=False)  # (N, T_k, d_model)
+    Q = layers.Dense(d_model, use_bias=False)(queries)  # (N, T_q, d_model)
+    K = layers.Dense(d_model, use_bias=False)(keys)  # (N, T_k, d_model)
+    V = layers.Dense(d_model, use_bias=False)(values)  # (N, T_k, d_model)
 
     # Split and concat
     Q_ = tf.concat(tf.split(Q, num_heads, axis=2),
@@ -1130,11 +1149,11 @@ def multihead_attention_v2(queries, keys, values, entry_mask,
      A 3d tensor with shape of (N, T_q, C)
    """
    d_model = queries.get_shape().as_list()[-1]
-   with tf.variable_scope(scope, default_name='multihead_attention'):
+   with tf.compat.v1.variable_scope(scope, default_name='multihead_attention'):
      # Linear projections
-     Q = tf.layers.dense(queries, d_model, use_bias=False)  # (N, T_q, d_model)
-     K = tf.layers.dense(keys, d_model, use_bias=False)  # (N, T_k, d_model)
-     V = tf.layers.dense(values, d_model, use_bias=False)  # (N, T_k, d_model)
+     Q = layers.Dense(d_model, use_bias=False)(queries)  # (N, T_q, d_model)
+     K = layers.Dense(d_model, use_bias=False)(keys)  # (N, T_k, d_model)
+     V = layers.Dense(d_model, use_bias=False)(values)  # (N, T_k, d_model)
      # Split and concat
      Q_ = tf.concat(tf.split(Q, num_heads, axis=2),
                     axis=0)  # (h*N, T_q, d_model/h)
@@ -1179,11 +1198,11 @@ def multihead_attention_v3(queries, keys, values, entry_mask,
   """
   # d_model = queries.get_shape().as_list()[-1]
   d_model = enc_dim
-  with tf.variable_scope(scope, default_name='multihead_attention'):
+  with tf.compat.v1.variable_scope(scope, default_name='multihead_attention'):
     # Linear projections
-    Q = tf.layers.dense(queries, d_model, use_bias=False)  # (N, T_q, d_model)
-    K = tf.layers.dense(keys, d_model, use_bias=False)  # (N, T_k, d_model)
-    V = tf.layers.dense(values, d_model, use_bias=False)  # (N, T_k, d_model)
+    Q = layers.Dense(d_model, use_bias=False)(queries)  # (N, T_q, d_model)
+    K = layers.Dense(d_model, use_bias=False)(keys)  # (N, T_k, d_model)
+    V = layers.Dense(d_model, use_bias=False)(values)  # (N, T_k, d_model)
 
     # Split and concat
     Q_ = tf.concat(tf.split(Q, num_heads, axis=2),
@@ -1207,10 +1226,10 @@ def multihead_attention_v3(queries, keys, values, entry_mask,
     # the head results are summed and passed through
     # a 2-layer MLP with hidden size 1024 and output
     # size 256
-    outputs = tfc_layers.fully_connected(outputs, 256)
+    outputs = layers.Dense(256)(outputs)
     outputs = tf.add_n(tf.split(outputs, num_heads, axis=0))
-    outputs = tfc_layers.fully_connected(outputs, 1024)
-    outputs = tfc_layers.fully_connected(outputs, 256, activation_fn=None)
+    outputs = layers.Dense(1024)(outputs)
+    outputs = layers.Dense(256, activation=None)(outputs)
 
     # # Residual connection
     # outputs += queries
@@ -1243,12 +1262,12 @@ def self_attention_ffsum(queries, keys, values, entry_mask,
   """
   # d_model = queries.get_shape().as_list()[-1]
   d_model = enc_dim
-  with tf.variable_scope(scope, default_name='self_attention_ffsum'):
+  with tf.compat.v1.variable_scope(scope, default_name='self_attention_ffsum'):
     # The Self Attention Block
     # Linear projections
-    Q = tf.layers.dense(queries, d_model, use_bias=False)  # (N, T_q, d_model)
-    K = tf.layers.dense(keys, d_model, use_bias=False)  # (N, T_k, d_model)
-    V = tf.layers.dense(values, d_model, use_bias=False)  # (N, T_k, d_model)
+    Q = layers.Dense(d_model, use_bias=False)(queries)  # (N, T_q, d_model)
+    K = layers.Dense(d_model, use_bias=False)(keys)  # (N, T_k, d_model)
+    V = layers.Dense(d_model, use_bias=False)(values)  # (N, T_k, d_model)
 
     # Split to num_heads
     Q_ = tf.concat(tf.split(Q, num_heads, axis=2),
@@ -1286,10 +1305,10 @@ def self_attention_ffsum(queries, keys, values, entry_mask,
     outputs_split = tf.split(outputs, num_heads, axis=-1)
     for i in range(num_heads):
       # Note(pengsun): equivalent to conv1d with kernel size 1
-      outputs_split[i] = tfc_layers.fully_connected(outputs_split[i], 256)
+      outputs_split[i] = layers.Dense(256)(outputs_split[i])
     outputs = tf.add_n(outputs_split)
-    outputs = tfc_layers.fully_connected(outputs, 1024)
-    outputs = tfc_layers.fully_connected(outputs, 256, activation_fn=None)
+    outputs = layers.Dense(1024)(outputs)
+    outputs = layers.Dense(256, activation=None)(outputs)
     outputs += skip  # Residual connection
     outputs = ln(outputs, scope='ff_ln')  # normalize
 
@@ -1307,7 +1326,7 @@ def ff(inputs, num_units, scope=None):
   Returns:
     A 3d tensor with the same shape and dtype as inputs
   """
-  with tf.variable_scope(scope, default_name="positionwise_feedforward"):
+  with tf.compat.v1.variable_scope(scope, default_name="positionwise_feedforward"):
     # Inner layer
     outputs = tf.layers.dense(inputs, num_units[0], activation=tf.nn.relu)
 
@@ -1324,7 +1343,7 @@ def ff(inputs, num_units, scope=None):
 
 
 # rnn stuff
-@add_arg_scope
+
 def lstm(inputs_x_seq: list,
          inputs_start_mask_seq: list,
          inputs_state,
@@ -1361,23 +1380,23 @@ def lstm(inputs_x_seq: list,
   # shorter names
   xs, ms, s = inputs_x_seq, inputs_start_mask_seq, inputs_state
   nbatch, nin = [v.value for v in xs[0].get_shape()]
-  with tf.variable_scope(scope, default_name='lstm'):
+  with tf.compat.v1.variable_scope(scope, default_name='lstm'):
     # weights & biases
-    # Use xavier_initializer for wx per qingwei's verification
-    wx = tf.get_variable("wx", [nin, nh * 4], initializer=xavier_initializer(),
+    # Use xavier_initializer for wx per qingwei's verification (in tf2 this is glorot_normal)
+    wx = tf.compat.v1.get_variable("wx", [nin, nh * 4], initializer=_v1_glorot_normal_initializer,
                          regularizer=weights_regularizer)
-    wh = tf.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
+    wh = tf.compat.v1.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
                          regularizer=weights_regularizer)
-    b = tf.get_variable("b", [nh * 4], initializer=biases_initializer,
+    b = tf.compat.v1.get_variable("b", [nh * 4], initializer=biases_initializer,
                         regularizer=biases_regularizer)
     # normalization function
     x_nf, h_nf, c_nf = None, None, None
     if use_layer_norm:
-      with tf.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
         x_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-      with tf.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
         h_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-      with tf.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
         c_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
 
   c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
@@ -1390,7 +1409,7 @@ def lstm(inputs_x_seq: list,
   return xs, s
 
 
-@add_arg_scope
+
 def k_lstm(inputs_x_seq: list,
            inputs_termial_mask_seq: list,
            inputs_state,
@@ -1430,22 +1449,22 @@ def k_lstm(inputs_x_seq: list,
   # shorter names
   xs, ms, s = inputs_x_seq, inputs_termial_mask_seq, inputs_state
   nbatch, nin = [v.value for v in xs[0].get_shape()]
-  with tf.variable_scope(scope, default_name='k_lstm'):
+  with tf.compat.v1.variable_scope(scope, default_name='k_lstm'):
     # weights & biases
-    wx = tf.get_variable("wx", [nin, nh * 4], initializer=weights_initializer,
+    wx = tf.compat.v1.get_variable("wx", [nin, nh * 4], initializer=weights_initializer,
                          regularizer=weights_regularizer)
-    wh = tf.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
+    wh = tf.compat.v1.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
                          regularizer=weights_regularizer)
-    b = tf.get_variable("b", [nh * 4], initializer=biases_initializer,
+    b = tf.compat.v1.get_variable("b", [nh * 4], initializer=biases_initializer,
                         regularizer=biases_regularizer)
     # normalization function
     x_nf, h_nf, c_nf = None, None, None
     if use_layer_norm:
-      with tf.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
         x_nf = partial(ln, scope=sc)
-      with tf.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
         h_nf = partial(ln, scope=sc)
-      with tf.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
         c_nf = partial(ln, scope=sc)
 
   nh = (s.shape[1].value - 1) // 2
@@ -1462,7 +1481,7 @@ def k_lstm(inputs_x_seq: list,
     h = tf.multiply(mod_mask, h_lstm) + tf.multiply(1 - mod_mask, h)
     xs[idx] = h
     # prepare for the next time step
-    cyclic_step_count = tf.mod(cyclic_step_count + 1, k)
+    cyclic_step_count = tf.math.mod(cyclic_step_count + 1, k)
   s = tf.concat(axis=1, values=[c, h, cyclic_step_count])
   return xs, s
 
@@ -1478,7 +1497,7 @@ ActionHead = namedtuple('ActionHead', [
 ])
 
 
-@add_arg_scope
+
 def to_action_head(flatparam, pdtype_cls, temperature=1.0,
                    nseq=None, mask=None, labels=None, sample=None, scope=None):
   """Convert logits to ActionHead.
@@ -1486,7 +1505,7 @@ def to_action_head(flatparam, pdtype_cls, temperature=1.0,
   Args:
     flatparam: (batch_size, pdtype_cls.param_shape())
     pdtype_cls: distribution type
-    scope: for tf.variable_scope
+    scope: for tf.compat.v1.variable_scope
 
   Returns:
     A ActionHead class instance.
@@ -1514,7 +1533,7 @@ def to_action_head(flatparam, pdtype_cls, temperature=1.0,
   else:
     raise NotImplemented('Unknown pdtype_cls {}'.format(pdtype_cls))
 
-  with tf.variable_scope(scope, default_name='to_action_head'):
+  with tf.compat.v1.variable_scope(scope, default_name='to_action_head'):
     head_pd = pdtype.pdfromflat(flatparam)
     head_argmax = head_pd.mode()
     # Note(pengsun): we cannot write `head_sam = sample or head_pd.sample()`,
@@ -1529,7 +1548,7 @@ def to_action_head(flatparam, pdtype_cls, temperature=1.0,
                     head_entropy)
 
 
-@add_arg_scope
+
 def discrete_action_head(inputs,
                          n_actions,
                          pdtype_cls,
@@ -1554,24 +1573,22 @@ def discrete_action_head(inputs,
   Returns:
     A `Tensor` representing the logits.
   """
-  with tf.variable_scope(scope, default_name='discrete_action_head'):
-    head_logits = tfc_layers.fully_connected(inputs,
-                                             n_actions,
-                                             activation_fn=None,
-                                             normalizer_fn=None,
-                                             scope='logits')
+  with tf.compat.v1.variable_scope(scope, default_name='discrete_action_head'):
+    head_logits = layers.Dense(n_actions,
+                                activation=None,
+                                normalizer_fn=None,
+                                scope='logits')(inputs)
 
     if enc_dim is not None and embed_scope is not None:
       # get the action embedding to do the "offset-add" (invented by lxhan)
       # TODO(pengsun): double-check the two-layer size, why the n_actions for
       #  the first layer?
-      head_h = tfc_layers.fully_connected(inputs, n_actions, scope='bfc1')
+      head_h = layers.Dense(n_actions, scope='bfc1')(inputs)
       # [bs, n_actions]
-      head_h_branch = tfc_layers.fully_connected(head_h,
-                                                 enc_dim,
-                                                 activation_fn=None,
-                                                 normalizer_fn=None,
-                                                 scope='bfc2')
+      head_h_branch = layers.Dense(enc_dim,
+                                    activation=None,
+                                    normalizer_fn=None,
+                                    scope='bfc2')(head_h)
       # [bs, enc_dim]
       offset = linear_embed(head_h_branch,
                             vocab_size=n_actions,
@@ -1588,7 +1605,7 @@ def discrete_action_head(inputs,
   return to_action_head(head_logits, pdtype_cls, temperature=temperature)
 
 
-@add_arg_scope
+
 def discrete_action_head_v2(inputs,
                             n_actions,
                             pdtype_cls,
@@ -1614,13 +1631,12 @@ def discrete_action_head_v2(inputs,
   Returns:
     A `Tensor` representing the logits.
   """
-  with tf.variable_scope(scope, default_name='discrete_action_head_v2'):
+  with tf.compat.v1.variable_scope(scope, default_name='discrete_action_head_v2'):
     if context is None:
-      head_logits = tfc_layers.fully_connected(inputs,
-                                               n_actions,
-                                               activation_fn=None,
-                                               normalizer_fn=None,
-                                               scope='logits')
+      head_logits = layers.Dense(n_actions,
+                                  activation=None,
+                                  normalizer_fn=None,
+                                  scope='logits')(inputs)
     else:
       head_logits = glu(inputs, context, n_actions, scope='gated_logits')
     if mask is not None:
@@ -1629,7 +1645,7 @@ def discrete_action_head_v2(inputs,
   return to_action_head(head_logits, pdtype_cls, temperature=temperature)
 
 
-@add_arg_scope
+
 def loc_action_head(inputs,
                     pdtype_cls,
                     mask=None,
@@ -1652,19 +1668,19 @@ def loc_action_head(inputs,
       logits_mode == '1x1': HH = H, WW = W
       logits_mode == '3x3up2': HH = 2*H, WW = 2*W
   """
-  with tf.variable_scope(scope, default_name='loc_action_head'):
+  with tf.compat.v1.variable_scope(scope, default_name='loc_action_head'):
     # [bs, H, W, C]
     if logits_mode == '3x3up2':
-      loc_logits = tfc_layers.conv2d_transpose(inputs, 1, [3, 3],
+      loc_logits = layers.Conv2DTranspose(1, [3, 3],
                                                stride=2,
-                                               activation_fn=None,
+                                               activation=None,
                                                normalizer_fn=None,
-                                               scope='3x3up2mapping')
+                                               scope='3x3up2mapping')(inputs)
     elif logits_mode == '1x1':
-      loc_logits = tfc_layers.conv2d(inputs, 1, [1, 1],
-                                     activation_fn=None,
+      loc_logits = layers.Conv2D(1, [1, 1],
+                                     activation=None,
                                      normalizer_fn=None,
-                                     scope='1x1mapping')
+                                     scope='1x1mapping')(inputs)
     else:
       raise ValueError('Unknown logits_mode {}'.format(logits_mode))
     # [bs, HH, WW, 1]
@@ -1673,7 +1689,7 @@ def loc_action_head(inputs,
     if mask is not None:
       loc_logits = tp_ops.mask_logits(loc_logits, mask)
     # [bs, HH, WW]
-    loc_logits_flat = tfc_layers.flatten(loc_logits)
+    loc_logits_flat = layers.Flatten(loc_logits)
     if scatter_ind is not None and scatter_bs is not None:
       loc_logits_flat = tf.scatter_nd(
         tf.expand_dims(scatter_ind, axis=-1),
@@ -1685,12 +1701,12 @@ def loc_action_head(inputs,
 
 
 def _ptr_decode(y, memory, num_dec_blocks, ff_dim, enc_dim, training=True):
-  with tf.variable_scope("decoder"):
+  with tf.compat.v1.variable_scope("decoder"):
     dec_logits, dec_pd = [], []
     dec = y
     # Blocks
     for i in range(num_dec_blocks):
-      with tf.variable_scope("num_blocks_{}".format(i)):
+      with tf.compat.v1.variable_scope("num_blocks_{}".format(i)):
         if i < num_dec_blocks - 1:
           # Vanilla attention
           dec = multihead_attention(queries=dec,
@@ -1716,7 +1732,7 @@ def _ptr_decode(y, memory, num_dec_blocks, ff_dim, enc_dim, training=True):
   return dec_logits, dec_pd
 
 
-@add_arg_scope
+
 def ptr_action_head(inputs_query,
                     inputs_ptr_mask,
                     inputs_entity_embed,
@@ -1745,7 +1761,7 @@ def ptr_action_head(inputs_query,
   Returns:
     An outputs `Tensor`.
   """
-  with tf.variable_scope(scope, default_name='ptr_head'):
+  with tf.compat.v1.variable_scope(scope, default_name='ptr_head'):
     select_logits, select_prob = _ptr_decode(
       y=inputs_query,
       memory=inputs_entity_embed,
@@ -1763,7 +1779,7 @@ def ptr_action_head(inputs_query,
   return to_action_head(select_logits, pdtype_cls, temperature=temperature)
 
 
-@add_arg_scope
+
 def ptr_action_head_v2(inputs_query,
                        inputs_ptr_mask,
                        inputs_entity_embed,
@@ -1790,12 +1806,12 @@ def ptr_action_head_v2(inputs_query,
   Returns:
     An outputs `Tensor`.
   """
-  with tf.variable_scope(scope, default_name='ptr_head'):
-    inputs_query = tfc_layers.fully_connected(inputs_query, 256, activation_fn=None)
+  with tf.compat.v1.variable_scope(scope, default_name='ptr_head'):
+    inputs_query = layers.Dense(256, activation=None)(inputs_query)
     inputs_query += tf.expand_dims(inputs_func_embed, axis=1)
     inputs_query = tf.nn.relu(inputs_query)
-    inputs_query = tfc_layers.fully_connected(inputs_query, 32, activation_fn=None)  # per AStar
-    projected_keys = tfc_layers.fully_connected(inputs_entity_embed, 32, activation_fn=None)
+    inputs_query = layers.Dense(32, activation=None)(inputs_query)  # per AStar
+    projected_keys = layers.Dense(32, activation=None)(inputs_entity_embed)
     # attentions (= queries * keys) as logits
     tar_logits = tf.reduce_sum(inputs_query * projected_keys, axis=-1)
     tar_logits = tp_ops.mask_logits(logits=tar_logits, mask=inputs_ptr_mask)
@@ -1807,7 +1823,7 @@ def ptr_action_head_v2(inputs_query,
   return to_action_head(tar_logits, pdtype_cls, temperature=temperature)
 
 
-@add_arg_scope
+
 def multinomial_action_head(inputs,
                             inputs_select_mask,
                             temperature=1.0,
@@ -1826,7 +1842,7 @@ def multinomial_action_head(inputs,
     An outputs `Tensor`.
   """
   n_action_states = 2  # whether the action is executed or not
-  with tf.variable_scope(scope, default_name='multinomial_action_head'):
+  with tf.compat.v1.variable_scope(scope, default_name='multinomial_action_head'):
     # this code block should not be here
     # query_h = dense_sum_blocks(inputs=inputs_query, n=4, enc_dim=enc_dim,
     #                      scope='q_res_blk')
@@ -1836,11 +1852,10 @@ def multinomial_action_head(inputs,
     # head_h = tf.concat([inputs_entity_embed, query_h], axis=-1)
     # head_h = dense_sum_blocks(inputs=head_h, n=4, enc_dim=enc_dim,
     #                     scope='eq_res_blk')
-    head_logits = tfc_layers.fully_connected(inputs,
-                                             n_action_states,
-                                             scope='logits',
-                                             activation_fn=None,
-                                             normalizer_fn=None)
+    head_logits = layers.Dense(n_action_states,
+                                scope='logits',
+                                activation=None,
+                                normalizer_fn=None)(inputs)
 
   # modify the logits that unavailable position will be -inf
   neginf = tf.zeros_like(inputs_select_mask, dtype=tf.float32) - INF
@@ -1870,7 +1885,7 @@ def multinomial_action_head(inputs,
   return ms_head
 
 
-@add_arg_scope
+
 def sequential_selection_head(inputs,
                               inputs_select_mask,
                               input_keys,
@@ -1907,7 +1922,7 @@ def sequential_selection_head(inputs,
   mean_key = (tf.reduce_sum(input_keys * expand_mask, axis=[1])
               / (tf.reduce_sum(expand_mask, axis=[1]) + 1e-8))
   # make keys with end key
-  end_key = tf.get_variable("end_key", [1, 1, nh],
+  end_key = tf.compat.v1.get_variable("end_key", [1, 1, nh],
                             initializer=tf.constant_initializer(0.2),
                             regularizer=None)
   input_keys = tf.concat([input_keys,
@@ -1915,27 +1930,27 @@ def sequential_selection_head(inputs,
   # make mask with terminal state
   inputs_select_mask = tf.concat(
     [inputs_select_mask, tf.constant([[True]] * nbatch, tf.bool)], axis=1)
-  with tf.variable_scope(scope, default_name='sequential_selection_head'):
-    with tf.variable_scope(scope, default_name='lstm'):
+  with tf.compat.v1.variable_scope(scope, default_name='sequential_selection_head'):
+    with tf.compat.v1.variable_scope(scope, default_name='lstm'):
       # weights & biases
-      wx = tf.get_variable("wx", [n_embed, nh * 4], initializer=weights_initializer,
+      wx = tf.compat.v1.get_variable("wx", [n_embed, nh * 4], initializer=weights_initializer,
                            regularizer=weights_regularizer)
-      wh = tf.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
+      wh = tf.compat.v1.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
                            regularizer=weights_regularizer)
-      b = tf.get_variable("b", [nh * 4], initializer=biases_initializer,
+      b = tf.compat.v1.get_variable("b", [nh * 4], initializer=biases_initializer,
                           regularizer=biases_regularizer)
-      wkey = tf.get_variable("wkey", [nh, nin], initializer=weights_initializer,
+      wkey = tf.compat.v1.get_variable("wkey", [nh, nin], initializer=weights_initializer,
                              regularizer=weights_regularizer)
-      with tf.variable_scope('embed', reuse=tf.AUTO_REUSE) as sc_embed:
+      with tf.compat.v1.variable_scope('embed', reuse=tf.AUTO_REUSE) as sc_embed:
         pass
       # normalization function
       x_nf, h_nf, c_nf = None, None, None
       if use_layer_norm:
-        with tf.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
           x_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
           h_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
           c_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
     c = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
     h = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
@@ -1946,7 +1961,7 @@ def sequential_selection_head(inputs,
     select_masks = []
     for idx in range(max_num):
       select_masks.append(inputs_select_mask)
-      s_embed = tfc_layers.fully_connected(inputs, n_embed, scope=sc_embed)
+      s_embed = layers.Dense(n_embed, scope=sc_embed)(inputs)
       c, h = one_step_lstm_op(c, h, s_embed, wx, wh, b,
                               forget_bias, x_nf, h_nf, c_nf)
       # attentions (= queries * keys) as logits
@@ -1969,7 +1984,7 @@ def sequential_selection_head(inputs,
       # Mask all the units except <EOS> if the selection already ends
       with tf.xla.experimental.jit_scope(compile_ops=False):
         end_ind = tf.cast(tf.where(tf.equal(sample, unit_num)), tf.int32)
-        inputs_select_mask = tf.tensor_scatter_update(
+        inputs_select_mask = tf.compat.v1.tensor_scatter_update(
           inputs_select_mask, end_ind,
           tf.concat([tf.zeros_like(end_ind, dtype=tf.bool)] * unit_num
                     + [tf.ones_like(end_ind, dtype=tf.bool)], axis=1)
@@ -1994,7 +2009,7 @@ def sequential_selection_head(inputs,
                                 axis=-1) * tf.cast(select_masks, tf.float32)
       end_labels = tf.concat([tf.zeros([nbatch, max_num, unit_num]),
                               tf.ones([nbatch, max_num, 1])], axis=-1)
-      labels = tf.where_v2(tf.expand_dims(mask, axis=-1),
+      labels = tf.compat.v1.where_v2(tf.expand_dims(mask, axis=-1),
                            select_labels, end_labels)
       labels = labels / tf.reduce_sum(labels, axis=-1, keepdims=True)
       samples = None
@@ -2003,7 +2018,7 @@ def sequential_selection_head(inputs,
     return head, embed
 
 
-@add_arg_scope
+
 def sequential_selection_head_v2(inputs,
                                  inputs_select_mask,
                                  input_keys,
@@ -2041,7 +2056,7 @@ def sequential_selection_head_v2(inputs,
   mean_key = (tf.reduce_sum(input_keys * expand_mask, axis=[1])
               / (tf.reduce_sum(expand_mask, axis=[1]) + 1e-8))
   # make keys with end key
-  end_key = tf.get_variable("end_key", [1, 1, nh],
+  end_key = tf.compat.v1.get_variable("end_key", [1, 1, nh],
                             initializer=tf.constant_initializer(0.2),
                             regularizer=None)
   input_keys = tf.concat([input_keys,
@@ -2049,29 +2064,29 @@ def sequential_selection_head_v2(inputs,
   # make mask with terminal state
   inputs_select_mask = tf.concat(
     [inputs_select_mask, tf.constant([[True]] * nbatch, tf.bool)], axis=1)
-  with tf.variable_scope(scope, default_name='sequential_selection_head'):
-    with tf.variable_scope(scope, default_name='lstm'):
+  with tf.compat.v1.variable_scope(scope, default_name='sequential_selection_head'):
+    with tf.compat.v1.variable_scope(scope, default_name='lstm'):
       # weights & biases
-      wx = tf.get_variable("wx", [32, nh * 4], initializer=weights_initializer,
+      wx = tf.compat.v1.get_variable("wx", [32, nh * 4], initializer=weights_initializer,
                            regularizer=weights_regularizer)
-      wh = tf.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
+      wh = tf.compat.v1.get_variable("wh", [nh, nh * 4], initializer=weights_initializer,
                            regularizer=weights_regularizer)
-      b = tf.get_variable("b", [nh * 4], initializer=biases_initializer,
+      b = tf.compat.v1.get_variable("b", [nh * 4], initializer=biases_initializer,
                           regularizer=biases_regularizer)
-      wkey = tf.get_variable("wkey", [nh, nin], initializer=weights_initializer,
+      wkey = tf.compat.v1.get_variable("wkey", [nh, nin], initializer=weights_initializer,
                              regularizer=weights_regularizer)
-      with tf.variable_scope('embed_fc1', reuse=tf.AUTO_REUSE) as sc_embed_fc1:
+      with tf.compat.v1.variable_scope('embed_fc1', reuse=tf.AUTO_REUSE) as sc_embed_fc1:
         pass
-      with tf.variable_scope('embed_fc2', reuse=tf.AUTO_REUSE) as sc_embed_fc2:
+      with tf.compat.v1.variable_scope('embed_fc2', reuse=tf.AUTO_REUSE) as sc_embed_fc2:
         pass
       # normalization function
       x_nf, h_nf, c_nf = None, None, None
       if use_layer_norm:
-        with tf.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
           x_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
           h_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
           c_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
     c = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
     h = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
@@ -2082,10 +2097,10 @@ def sequential_selection_head_v2(inputs,
     select_masks = []
     for idx in range(max_num):
       select_masks.append(inputs_select_mask)
-      s_embed = tfc_layers.fully_connected(inputs, n_embed, activation_fn=None, scope=sc_embed_fc1)
+      s_embed = layers.Dense(n_embed, activation=None, scope=sc_embed_fc1)(inputs)
       s_embed += input_func_embed
       s_embed = tf.nn.relu(s_embed)
-      s_embed = tfc_layers.fully_connected(s_embed, 32, activation_fn=None, scope=sc_embed_fc2)  # per AStar
+      s_embed = layers.Dense(32, activation=None, scope=sc_embed_fc2)(s_embed)  # per AStar
       c, h = one_step_lstm_op(c, h, s_embed, wx, wh, b,
                               forget_bias, x_nf, h_nf, c_nf)
       # attentions (= queries * keys) as logits
@@ -2108,7 +2123,7 @@ def sequential_selection_head_v2(inputs,
       # Mask all the units except <EOS> if the selection already ends
       with tf.xla.experimental.jit_scope(compile_ops=False):
         end_ind = tf.cast(tf.where(tf.equal(sample, unit_num)), tf.int32)
-        inputs_select_mask = tf.tensor_scatter_update(
+        inputs_select_mask = tf.compat.v1.tensor_scatter_update(
           inputs_select_mask, end_ind,
           tf.concat([tf.zeros_like(end_ind, dtype=tf.bool)] * unit_num
                     + [tf.ones_like(end_ind, dtype=tf.bool)], axis=1)
@@ -2133,7 +2148,7 @@ def sequential_selection_head_v2(inputs,
                                 axis=-1) * tf.cast(select_masks, tf.float32)
       end_labels = tf.concat([tf.zeros([nbatch, max_num, unit_num]),
                               tf.ones([nbatch, max_num, 1])], axis=-1)
-      labels = tf.where_v2(tf.expand_dims(mask, axis=-1),
+      labels = tf.compat.v1.where_v2(tf.expand_dims(mask, axis=-1),
                            select_labels, end_labels)
       labels = labels / tf.reduce_sum(labels, axis=-1, keepdims=True)
       samples = None
@@ -2142,7 +2157,7 @@ def sequential_selection_head_v2(inputs,
     return head, embed
 
 
-@add_arg_scope
+
 def dot_prod_attention(values, query, mask):
   a = tf.stack([tf.reduce_sum(tf.multiply(v, query), axis=-1)
                 for v in values], -1)
@@ -2153,7 +2168,7 @@ def dot_prod_attention(values, query, mask):
   return res
 
 
-@add_arg_scope
+
 def lstm_embed_block(inputs_x, inputs_hs, inputs_mask, nc,
                      outputs_collections=None):
   """ lstm embedding block.
@@ -2178,7 +2193,7 @@ def lstm_embed_block(inputs_x, inputs_hs, inputs_mask, nc,
                                  keep_prob=1 - nc.lstm_dropout_rate)
     return [x * dropout_mask for x in input_seq]
 
-  with tf.variable_scope('lstm_embed') as sc:
+  with tf.compat.v1.variable_scope('lstm_embed') as sc:
     # to list sequence and call the lstm cell
     x_seq = tp_ops.batch_to_seq(inputs_x, nc.nrollout, nc.rollout_len)
     # add dropout before LSTM cell TODO(pengsun): use tf.layers.dropout?
@@ -2213,8 +2228,7 @@ def lstm_embed_block(inputs_x, inputs_hs, inputs_mask, nc,
       lstm_embed = consist_seq_dropout(lstm_embed)
     lstm_embed = tp_ops.seq_to_batch(lstm_embed)
 
-    return (
-      lutils.collect_named_outputs(outputs_collections, sc.name + '_out',
-                                   lstm_embed),
-      lutils.collect_named_outputs(outputs_collections, sc.name + '_hs', hs_new)
-    )
+    if outputs_collections is not None:
+        outputs_collections[sc.original_name_scope+'_out'] = lstm_embed
+        outputs_collections[sc.original_name_scope+'_hs'] = hs_new
+    return lstm_embed, hs_new
