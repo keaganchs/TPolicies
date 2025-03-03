@@ -252,14 +252,14 @@ class DiagGaussianPd(Pd):
         return self.mean
     def neglogp(self, x):
         return 0.5 * tf.reduce_sum(tf.square((x - self.mean) / self.std), axis=-1) \
-               + 0.5 * np.log(2.0 * np.pi) * tf.to_float(tf.shape(x)[-1]) \
+               + 0.5 * np.log(2.0 * np.pi) * tf.cast(tf.shape(x)[-1], tf.float32) \
                + tf.reduce_sum(self.logstd, axis=-1)
     def kl(self, other):
         return tf.reduce_sum(other.logstd - self.logstd + (tf.square(self.std) + tf.square(self.mean - other.mean)) / (2.0 * tf.square(other.std)) - 0.5, axis=-1)
     def entropy(self):
         return tf.reduce_sum(self.logstd + .5 * np.log(2.0 * np.pi * np.e), axis=-1)
     def sample(self):
-        return self.mean + self.std * tf.random_normal(tf.shape(self.mean))
+        return self.mean + self.std * tf.random.normal(tf.shape(self.mean))
     @classmethod
     def fromflat(cls, flat):
         return cls(flat)
@@ -273,14 +273,14 @@ class BernoulliPd(Pd):
     def mode(self):
         return tf.round(self.ps)
     def neglogp(self, x):
-        return tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.logits, labels=tf.to_float(x)), axis=-1)
+        return tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.logits, labels=tf.cast(x, tf.float32)), axis=-1)
     def kl(self, other):
         return tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(logits=other.logits, labels=self.ps), axis=-1) - tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.logits, labels=self.ps), axis=-1)
     def entropy(self):
         return tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.logits, labels=self.ps), axis=-1)
     def sample(self):
-        u = tf.random_uniform(tf.shape(self.ps))
-        return tf.to_float(math_ops.less(u, self.ps))
+        u = tf.random.normal(tf.shape(self.ps))
+        return tf.cast(math_ops.less(u, self.ps), tf.float32)
     @classmethod
     def fromflat(cls, flat):
         return cls(flat)

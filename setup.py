@@ -17,6 +17,7 @@ setup(
       # 'tensorflow',
       'numpy',
       'joblib',
-      'gymnasium==1.1'
+      'gymnasium==1.1',
+      "dm-tree", # For TF2 migration: https://github.com/tensorflow/tensorflow/issues/33748
     ]
 )
