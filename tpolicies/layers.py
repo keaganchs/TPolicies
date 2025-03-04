@@ -41,8 +41,12 @@ def identity_layer(inputs, outputs_collections=None, scope=None):
   with tf.compat.v1.variable_scope(scope, default_name='identity_layer') as sc:
     outputs = tf.identity(inputs)
 
-    if outputs_collections is not None:
-        outputs_collections[sc.name] = outputs
+
+    with tf.compat.v1.variable_scope(scope, default_name='identity_layer') as sc:
+        outputs = tf.identity(inputs)
+
+    tf.compat.v1.add_to_collections(sc.name, outputs)
+
     return outputs
 
 
@@ -1392,11 +1396,11 @@ def lstm(inputs_x_seq: list,
     # normalization function
     x_nf, h_nf, c_nf = None, None, None
     if use_layer_norm:
-      with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('x_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
         x_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-      with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('h_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
         h_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-      with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('c_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
         c_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
 
   c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
@@ -1460,11 +1464,11 @@ def k_lstm(inputs_x_seq: list,
     # normalization function
     x_nf, h_nf, c_nf = None, None, None
     if use_layer_norm:
-      with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('x_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
         x_nf = partial(ln, scope=sc)
-      with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('h_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
         h_nf = partial(ln, scope=sc)
-      with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+      with tf.compat.v1.variable_scope('c_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
         c_nf = partial(ln, scope=sc)
 
   nh = (s.shape[1].value - 1) // 2
@@ -1517,7 +1521,7 @@ def to_action_head(flatparam, pdtype_cls, temperature=1.0,
       mean, logstd = tf.split(axis=-1, num_or_size_splits=2,
                               value=flatparam)
       flatparam = tf.concat(
-        [mean, logstd + 0.5 * tf.log(float(temperature))], axis=-1)
+        [mean, logstd + 0.5 * tf.math.log(float(temperature))], axis=-1)
   else:
     flatparam /= temperature
     n_actions = flatparam.shape[-1]
@@ -1941,16 +1945,16 @@ def sequential_selection_head(inputs,
                           regularizer=biases_regularizer)
       wkey = tf.compat.v1.get_variable("wkey", [nh, nin], initializer=weights_initializer,
                              regularizer=weights_regularizer)
-      with tf.compat.v1.variable_scope('embed', reuse=tf.AUTO_REUSE) as sc_embed:
+      with tf.compat.v1.variable_scope('embed', reuse=tf.compat.v1.AUTO_REUSE) as sc_embed:
         pass
       # normalization function
       x_nf, h_nf, c_nf = None, None, None
       if use_layer_norm:
-        with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('x_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
           x_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('h_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
           h_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('c_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
           c_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
     c = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
     h = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
@@ -2075,18 +2079,18 @@ def sequential_selection_head_v2(inputs,
                           regularizer=biases_regularizer)
       wkey = tf.compat.v1.get_variable("wkey", [nh, nin], initializer=weights_initializer,
                              regularizer=weights_regularizer)
-      with tf.compat.v1.variable_scope('embed_fc1', reuse=tf.AUTO_REUSE) as sc_embed_fc1:
+      with tf.compat.v1.variable_scope('embed_fc1', reuse=tf.compat.v1.AUTO_REUSE) as sc_embed_fc1:
         pass
-      with tf.compat.v1.variable_scope('embed_fc2', reuse=tf.AUTO_REUSE) as sc_embed_fc2:
+      with tf.compat.v1.variable_scope('embed_fc2', reuse=tf.compat.v1.AUTO_REUSE) as sc_embed_fc2:
         pass
       # normalization function
       x_nf, h_nf, c_nf = None, None, None
       if use_layer_norm:
-        with tf.compat.v1.variable_scope('x_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('x_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
           x_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.compat.v1.variable_scope('h_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('h_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
           h_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
-        with tf.compat.v1.variable_scope('c_ln', reuse=tf.AUTO_REUSE) as sc:
+        with tf.compat.v1.variable_scope('c_ln', reuse=tf.compat.v1.AUTO_REUSE) as sc:
           c_nf = partial(ln, epsilon=1e-5, enable_openai_impl=True, scope=sc)
     c = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
     h = tf.constant(0.0, shape=[nbatch, nh], dtype=tf.float32)
@@ -2229,6 +2233,11 @@ def lstm_embed_block(inputs_x, inputs_hs, inputs_mask, nc,
     lstm_embed = tp_ops.seq_to_batch(lstm_embed)
 
     if outputs_collections is not None:
-        outputs_collections[sc.original_name_scope+'_out'] = lstm_embed
-        outputs_collections[sc.original_name_scope+'_hs'] = hs_new
+        print("OUTPUT_COLLECTIONS: ", outputs_collections)
+    #     outputs_collections[sc.original_name_scope+'_out'] = lstm_embed
+    #     outputs_collections[sc.original_name_scope+'_hs'] = hs_new
+
+    # tf.compat.v1.add_to_collection(outputs_collections[sc.original_name_scope+'_out'], lstm_embed)
+    # tf.compat.v1.add_to_collection(outputs_collections[sc.original_name_scope+'_hs'], hs_new)
+
     return lstm_embed, hs_new

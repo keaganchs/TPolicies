@@ -444,5 +444,5 @@ def vtrace_loss(neglogp, oldneglogp, mask, values, rewards, discounts,
 def supervised_loss(label, predict):
   soft_logits = tf.nn.softmax(predict)
   soft_logits = tf.clip_by_value(soft_logits, 0.000001, 0.999999)
-  loss = -tf.reduce_sum(label * tf.log(soft_logits), axis=1)
+  loss = -tf.reduce_sum(label * tf.math.log(soft_logits), axis=1)
   return loss

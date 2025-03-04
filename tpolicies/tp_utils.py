@@ -36,7 +36,7 @@ def placeholders_from_gym_space(space: Space, batch_size=None, name='Ob'):
     * GymDict -> a OrderedDict() of Tensors
   """
   return map_gym_space_to_structure(
-    func=lambda x_sp: tf.placeholder(shape=(batch_size,) + x_sp.shape,
+    func=lambda x_sp: tf.compat.v1.placeholder(shape=(batch_size,) + x_sp.shape,
                                      dtype=x_sp.dtype,
                                      name=name),
     gym_sp=space
@@ -135,7 +135,7 @@ def find_tensors(collection, scope=None, alias=None):
   Returns:
     A list of found `Tensor`s
   """
-  ts = tf.get_collection(collection, scope)
+  ts = tf.compat.v1.get_collection(collection, scope)
   if alias is None:
     return ts
 
