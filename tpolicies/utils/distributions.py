@@ -41,9 +41,9 @@ class PdType(object):
         raise NotImplementedError
 
     def param_placeholder(self, prepend_shape, name=None):
-        return tf.placeholder(dtype=tf.float32, shape=prepend_shape+self.param_shape(), name=name)
+        return tf.compat.v1.placeholder(dtype=tf.float32, shape=prepend_shape+self.param_shape(), name=name)
     def sample_placeholder(self, prepend_shape, name=None):
-        return tf.placeholder(dtype=self.sample_dtype(), shape=prepend_shape+self.sample_shape(), name=name)
+        return tf.compat.v1.placeholder(dtype=self.sample_dtype(), shape=prepend_shape+self.sample_shape(), name=name)
 
 class CategoricalPdType(PdType):
     def __init__(self, ncat):
@@ -101,7 +101,7 @@ class DiagGaussianPdType(PdType):
 
     def pdfromlatent(self, latent_vector, init_scale=1.0, init_bias=0.0):
         mean = fc(latent_vector, 'pi', self.size, init_scale=init_scale, init_bias=init_bias)
-        logstd = tf.get_variable(name='logstd', shape=[1, self.size], initializer=tf.zeros_initializer())
+        logstd = tf.compat.v1.get_variable(name='logstd', shape=[1, self.size], initializer=tf.zeros_initializer())
         pdparam = tf.concat([mean, mean * 0.0 + logstd], axis=1)
         return self.pdfromflat(pdparam), mean
 
@@ -152,13 +152,13 @@ class CategoricalPd(Pd):
         z0 = tf.reduce_sum(ea0, axis=-1, keep_dims=True)
         z1 = tf.reduce_sum(ea1, axis=-1, keep_dims=True)
         p0 = ea0 / z0
-        return tf.reduce_sum(p0 * (a0 - tf.log(z0) - a1 + tf.log(z1)), axis=-1)
+        return tf.reduce_sum(p0 * (a0 - tf.math.log(z0) - a1 + tf.math.log(z1)), axis=-1)
     def entropy(self):
         a0 = self.logits - tf.reduce_max(self.logits, axis=-1, keep_dims=True)
         ea0 = tf.exp(a0)
         z0 = tf.reduce_sum(ea0, axis=-1, keep_dims=True)
         p0 = ea0 / z0
-        return tf.reduce_sum(p0 * (tf.log(z0) - a0), axis=-1)
+        return tf.reduce_sum(p0 * (tf.math.log(z0) - a0), axis=-1)
     def sample(self):
         return cat_sample_from_logits(self.logits)
     @classmethod
@@ -210,7 +210,7 @@ class MaskSeqCategoricalPd(CategoricalPd):
         assert self.labels is not None
         xe = tf.nn.softmax_cross_entropy_with_logits(
             logits=self.logits, labels=self.labels)
-        logp = tf.log(self.labels)
+        logp = tf.math.log(self.labels)
         ent = tf.where(self.labels > 0, - self.labels * logp, self.labels)
         xe -= tf.reduce_sum(ent, axis=-1)
         if mean:
@@ -286,7 +286,7 @@ class BernoulliPd(Pd):
         return cls(flat)
 
 def make_pdtype(ac_space):
-    from gym import spaces
+    from gymnasium import spaces
     if isinstance(ac_space, spaces.Box):
         assert len(ac_space.shape) == 1
         return DiagGaussianPdType(ac_space.shape[0])
@@ -308,8 +308,8 @@ def shape_el(v, i):
 
 
 def fc(x, scope, nh, *, init_scale=1.0, init_bias=0.0):
-    with tf.variable_scope(scope):
+    with tf.compat.v1.variable_scope(scope):
         nin = x.get_shape()[1].value
-        w = tf.get_variable("w", [nin, nh], initializer=ortho_init(init_scale))
-        b = tf.get_variable("b", [nh], initializer=tf.constant_initializer(init_bias))
+        w = tf.compat.v1.get_variable("w", [nin, nh], initializer=ortho_init(init_scale))
+        b = tf.compat.v1.get_variable("b", [nh], initializer=tf.constant_initializer(init_bias))
         return tf.matmul(x, w)+b
